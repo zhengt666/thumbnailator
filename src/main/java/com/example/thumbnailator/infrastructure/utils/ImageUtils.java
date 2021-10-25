@@ -1,6 +1,8 @@
 package com.example.thumbnailator.infrastructure.utils;
 
 import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.Image;
 import java.awt.image.BufferedImage;
 import java.awt.image.ColorModel;
 import java.io.ByteArrayInputStream;
@@ -29,6 +31,9 @@ import net.coobird.thumbnailator.Thumbnails;
 import org.apache.commons.io.IOUtils;
 
 import com.example.thumbnailator.infrastructure.common.exception.ThumbnailsException;
+import com.sun.image.codec.jpeg.JPEGCodec;
+import com.sun.image.codec.jpeg.JPEGEncodeParam;
+import com.sun.image.codec.jpeg.JPEGImageEncoder;
 
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -52,87 +57,35 @@ public class ImageUtils {
     
     
     /**
-     * 【压缩图片】到要求的图片标准:  宽[300,500],高[300,500];100kb;jpg/jpeg
-     * 先按宽高压缩，压缩后如果还不满足100kb,则按质量递归压缩
+     * 【压缩图片】到要求的图片标准:  宽[300,500],高[300,500];100kb;jpg/jpeg 先按宽高压缩，压缩后如果还不满足100kb,则按质量递归压缩
+     *
+     * @param imgFile     源图片文件
+     * @param maxkb       目标kb
+     * @param photoWidth  目标宽度
+     * @param photoHeight 模板高度
+     * @param quality     质量
+     * @return 处理后的文件byte[]
+     * @throws Exception
      * @Title:compressPhoto
      * @Description: TODO
      * @date 2020年6月30日 下午2:11:52
      * @author yqwang
-     * @param imgFile 源图片文件
-     * @param maxkb 目标kb
-     * @param photoWidth 目标宽度
-     * @param photoHeight 模板高度
-     * @param quality 质量
-     * @return 处理后的文件byte[]
-     * @throws Exception
      */
-    public static byte[] compressPhoto(File imgFile,Integer maxkb,Integer photoWidth,Integer photoHeight,Float quality,String fileType) throws IOException{
+    public static byte[] compressPhoto(File imgFile, Integer maxkb, Integer photoWidth, Integer photoHeight,
+            Float quality, String fileType) throws IOException {
         // 1.压缩图片是否存在
-        if(imgFile == null || !imgFile.exists()){
+        if (imgFile == null || !imgFile.exists()) {
             throw new ThumbnailsException("图片文件不存在。");
         }
         byte[] bytes = readFileToByteArray(imgFile);
-        if( bytes.length == 0){
+        if (bytes.length == 0) {
             throw new ThumbnailsException("图片文件为空。");
         }
         
         // 2.是否超过100kb?没超过就不处理图片
         long fileSize = bytes.length;
         if (fileSize <= maxkb * 1024) {
-            log.info("图片不超过{}kb,无需压缩。",maxkb);
-            return bytes;
-        }
-        
-        // 3.压缩到300-500宽高，100kb
-        if (Objects.nonNull(photoHeight) && Objects.nonNull(photoWidth)) {
-            BufferedImage bim = ImageIO.read(new ByteArrayInputStream(bytes));
-            int imgWidth = bim.getWidth();
-            int imgHeight = bim.getHeight();
-    
-            // 3.1.先按宽高判断是否需要缩放  outputQuality=1确保画质清晰
-            if (imgWidth >= photoWidth && imgHeight >= photoHeight) {
-                log.info("先按宽{}高{}压缩。", photoWidth, photoHeight);
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                //Closing a <tt>ByteArrayOutputStream</tt> has no effect.   因此无需close
-                Thumbnails.of(new ByteArrayInputStream(bytes)).size(photoWidth, photoHeight).outputQuality(1)
-                        .outputFormat(fileType).toOutputStream(out);
-                bytes = out.toByteArray();
-            }
-        }
-        // 3.2.判断按宽高缩放后是否超过100kb,超过递归就按质量压缩（图片会变得越来越模糊！）
-        bytes = compressPhotoByQuality(bytes, quality, maxkb,fileType);
-        return bytes;
-    }
-    
-    /**
-     * 【压缩图片】到要求的图片标准:  宽[300,500],高[300,500];100kb;jpg/jpeg
-     * 先按宽高压缩，压缩后如果还不满足100kb,则按质量递归压缩
-     * @Title:compressPhoto
-     * @Description: TODO
-     * @date 2020年6月30日 下午2:11:52
-     * @author yqwang
-     * @param imgFile 源图片文件
-     * @param maxkb 目标kb
-     * @param photoWidth 目标宽度
-     * @param photoHeight 模板高度
-     * @param quality 质量
-     * @return 处理后的文件byte[]
-     * @throws Exception
-     */
-    public static byte[] compressPhotoV2(File imgFile,Integer maxkb,Integer photoWidth,Integer photoHeight,Float quality,String fileType) throws IOException{
-        // 1.压缩图片是否存在
-        if(imgFile == null || !imgFile.exists()){
-            throw new ThumbnailsException("图片文件不存在。");
-        }
-        byte[] bytes = readFileToByteArray(imgFile);
-        if( bytes.length == 0){
-            throw new ThumbnailsException("图片文件为空。");
-        }
-        
-        // 2.是否超过100kb?没超过就不处理图片
-        long fileSize = bytes.length;
-        if (fileSize <= maxkb * 1024) {
-            log.info("图片不超过{}kb,无需压缩。",maxkb);
+            log.info("图片不超过{}kb,无需压缩。", maxkb);
             return bytes;
         }
         
@@ -153,50 +106,113 @@ public class ImageUtils {
             }
         }
         // 3.2.判断按宽高缩放后是否超过100kb,超过递归就按质量压缩（图片会变得越来越模糊！）
-        byte[] result = null;
-        for (Float aFloat : qualityList) {
-            bytes = compressPicByQuality(bytes, aFloat);
-            if (bytes != null) {
-                if (result == null) {
-                    result = bytes;
-                }
-                float byteLength = Math.abs(bytes.length - maxkb * 1024);
-                float resultLength = Math.abs(result.length - maxkb * 1024);
-                if (byteLength < resultLength) {
-                    result = bytes;
-                }
+        bytes = compressPhotoByQuality(bytes, quality, maxkb, fileType);
+        return bytes;
+    }
+    
+    /**
+     * 【压缩图片】到要求的图片标准:  宽[300,500],高[300,500];100kb;jpg/jpeg 先按宽高压缩，压缩后如果还不满足100kb,则按质量递归压缩
+     *
+     * @param imgFile     源图片文件
+     * @param maxkb       目标kb
+     * @param photoWidth  目标宽度
+     * @param photoHeight 模板高度
+     * @return 处理后的文件byte[]
+     * @throws Exception
+     * @Title:compressPhoto
+     * @Description: TODO
+     * @date 2020年6月30日 下午2:11:52
+     * @author yqwang
+     */
+    public static byte[] compressPhotoV2(File imgFile, Integer maxkb, Integer photoWidth, Integer photoHeight,
+            String fileType) throws IOException {
+        // 1.压缩图片是否存在
+        if (imgFile == null || !imgFile.exists()) {
+            throw new ThumbnailsException("图片文件不存在。");
+        }
+        byte[] bytes = readFileToByteArray(imgFile);
+        if (bytes.length == 0) {
+            throw new ThumbnailsException("图片文件为空。");
+        }
+        
+        // 2.是否超过100kb?没超过就不处理图片
+        long fileSize = bytes.length;
+        if (fileSize <= maxkb * 1024) {
+            log.info("图片不超过{}kb,无需压缩。", maxkb);
+            return bytes;
+        }
+        
+        // 3.压缩到300-500宽高，100kb
+        if (Objects.nonNull(photoHeight) && Objects.nonNull(photoWidth)) {
+            BufferedImage bim = ImageIO.read(new ByteArrayInputStream(bytes));
+            int imgWidth = bim.getWidth();
+            int imgHeight = bim.getHeight();
+            
+            // 3.1.先按宽高判断是否需要缩放  outputQuality=1确保画质清晰
+            if (imgWidth >= photoWidth && imgHeight >= photoHeight) {
+                log.info("先按宽{}高{}压缩。", photoWidth, photoHeight);
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                //Closing a <tt>ByteArrayOutputStream</tt> has no effect.   因此无需close
+                Thumbnails.of(new ByteArrayInputStream(bytes)).size(photoWidth, photoHeight).outputQuality(1)
+                        .outputFormat(fileType).toOutputStream(out);
+                bytes = out.toByteArray();
             }
         }
-        return result;
+        byte[] compressBytes = compressPic(bytes, 1f);
+        if (compressBytes != null) {
+            while (compressBytes.length > maxkb * 1024) {
+                compressPic(bytes, getAccuracy(bytes.length, maxkb));
+            }
+        }
+        return compressBytes;
+    }
+    
+    /**
+     * 精度计算
+     *
+     * @param size 当前大小
+     * @return
+     */
+    private static float getAccuracy(long size, Integer max) {
+        float accuracy;
+        //图片大小小于4M,压缩精度为0.44;否则精度为0.4
+        if (size <= max * 2048) {
+            accuracy = 0.44f;
+        } else {
+            accuracy = 0.4f;
+        }
+        return accuracy;
     }
     
     /**
      * 递归按quality质量处理，压缩到maxkb后返回新的bytes值
+     *
+     * @param bytes    源文件字节
+     * @param quality  压缩质量 （如果>=1则不处理）
+     * @param maxkb    要求压缩到的最大kb
+     * @param fileType 如png或者jpg
+     * @return
+     * @throws IOException
      * @Title:compressPhotoByQuality
      * @Description: TODO
      * @date 2020年6月30日 下午2:24:36
      * @author yqwang
-     * @param bytes 源文件字节
-     * @param quality 压缩质量 （如果>=1则不处理）
-     * @param maxkb 要求压缩到的最大kb
-     * @param fileType 如png或者jpg
-     * @return
-     * @throws IOException
      */
-    public static byte[] compressPhotoByQuality(byte[] bytes, Float quality, long maxkb, String fileType) throws IOException{
-        if(bytes == null){
+    public static byte[] compressPhotoByQuality(byte[] bytes, Float quality, long maxkb, String fileType)
+            throws IOException {
+        if (bytes == null) {
             return bytes;
         }
-        log.info("开始按质量压缩图片({}kb)。",bytes.length/1024);
+        log.info("开始按质量压缩图片({}kb)。", bytes.length / 1024);
         // 如果配置的>=1，则不再处理,多说无益
-        if(quality >= 1){
+        if (quality >= 1) {
             log.info("quality>=1,不执行压缩。");
             return bytes;
         }
         // 满足目标kb值，则返回
         long fileSize = bytes.length;
         if (fileSize <= maxkb * 1024) {
-            log.info("图片文件{}kb<={}kb,不再压缩质量。",fileSize/1024,maxkb);
+            log.info("图片文件{}kb<={}kb,不再压缩质量。", fileSize / 1024, maxkb);
             return bytes;
         }
         // Closing a <tt>ByteArrayOutputStream</tt> has no effect.   因此无需close
@@ -208,39 +224,42 @@ public class ImageUtils {
         // 如果不处理size,只用quality,可能导致一致压缩不到目标值，一致递归在当前方法中！！
         int desWidth = new BigDecimal(imgWidth).multiply(new BigDecimal(quality)).intValue();
         int desHeight = new BigDecimal(imgHeight).multiply(new BigDecimal(quality)).intValue();
-        log.info("图片文将按照width={}*height={}进行压缩，画质quality={}。",desWidth,desHeight,quality);
-        Thumbnails.of(new ByteArrayInputStream(bytes)).size(desWidth, desHeight).outputQuality(quality).outputFormat(fileType).toOutputStream(out);
+        log.info("图片文将按照width={}*height={}进行压缩，画质quality={}。", desWidth, desHeight, quality);
+        Thumbnails.of(new ByteArrayInputStream(bytes)).size(desWidth, desHeight).outputQuality(quality)
+                .outputFormat(fileType).toOutputStream(out);
         //递归
         return compressPhotoByQuality(out.toByteArray(), quality, maxkb, fileType);
     }
     
     /**
      * 递归按quality质量处理，压缩到maxkb后返回新的bytes值
+     *
+     * @param bytes    源文件字节
+     * @param quality  压缩质量 （如果>=1则不处理）
+     * @param maxkb    要求压缩到的最大kb
+     * @param fileType 如png或者jpg
+     * @return
+     * @throws IOException
      * @Title:compressPhotoByQuality
      * @Description: TODO
      * @date 2020年6月30日 下午2:24:36
      * @author yqwang
-     * @param bytes 源文件字节
-     * @param quality 压缩质量 （如果>=1则不处理）
-     * @param maxkb 要求压缩到的最大kb
-     * @param fileType 如png或者jpg
-     * @return
-     * @throws IOException
      */
-    public static byte[] compressPhotoByQualityV2(byte[] bytes, Float quality, long maxkb, String fileType) throws IOException{
-        if(bytes == null){
+    public static byte[] compressPhotoByQualityV2(byte[] bytes, Float quality, long maxkb, String fileType)
+            throws IOException {
+        if (bytes == null) {
             return bytes;
         }
-        log.info("开始按质量压缩图片({}kb)。",bytes.length/1024);
+        log.info("开始按质量压缩图片({}kb)。", bytes.length / 1024);
         // 如果配置的>=1，则不再处理,多说无益
-        if(quality >= 1){
+        if (quality >= 1) {
             log.info("quality>=1,不执行压缩。");
             return bytes;
         }
         // 满足目标kb值，则返回
         long fileSize = bytes.length;
         if (fileSize <= maxkb * 1024) {
-            log.info("图片文件{}kb<={}kb,不再压缩质量。",fileSize/1024,maxkb);
+            log.info("图片文件{}kb<={}kb,不再压缩质量。", fileSize / 1024, maxkb);
             return bytes;
         }
         // Closing a <tt>ByteArrayOutputStream</tt> has no effect.   因此无需close
@@ -249,13 +268,16 @@ public class ImageUtils {
         BufferedImage bim = ImageIO.read(new ByteArrayInputStream(bytes));
         int imgWidth = bim.getWidth();
         int imgHeight = bim.getHeight();
-        log.info("图片文将按照width={}*height={}进行压缩，画质quality={}。",imgWidth,imgHeight,quality);
-        Thumbnails.of(new ByteArrayInputStream(bytes)).size(imgWidth, imgHeight).outputQuality(quality).outputFormat(fileType).toOutputStream(out);
+        log.info("图片文将按照width={}*height={}进行压缩，画质quality={}。", imgWidth, imgHeight, quality);
+        Thumbnails.of(new ByteArrayInputStream(bytes)).size(imgWidth, imgHeight).outputQuality(quality)
+                .outputFormat(fileType).toOutputStream(out);
         //递归
         return out.toByteArray();
     }
     
-    /**File to bytes[]*/
+    /**
+     * File to bytes[]
+     */
     public static byte[] readFileToByteArray(File f) {
         byte[] fileb = null;
         InputStream is = null;
@@ -295,16 +317,18 @@ public class ImageUtils {
     }
     
     public static void main(String[] args) throws Exception {
-        File imageFile = new File("C:\\Users\\taozheng4\\Desktop\\new\\banner2.e1d4cd67.png");
-        byte[] bytes = compressPhoto(imageFile, 100, 500, 500, 0.99F,"png");
+        File imageFile = new File(
+                "C:\\thumbnails\\2021-10-25\\f986166a-7414-4265-b6e8-a1b7bd2738e3\\10-22压缩\\compress\\10-22压缩\\分子诊断\\分子诊断-肺癌643基因靶向免疫化疗检测套餐.png");
+        byte[] inBytes = readFileToByteArray(imageFile);
+        byte[] bytes = compressPic(inBytes, 0.48f);
         ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(bytes);
         BufferedImage image = ImageIO.read(byteArrayInputStream);
         ByteArrayOutputStream bs = new ByteArrayOutputStream();
         ImageOutputStream imageOutputStream = ImageIO.createImageOutputStream(bs);
         assert image != null;
-        ImageIO.write(image, "png", imageOutputStream);
+        ImageIO.write(image, "jpg", imageOutputStream);
         InputStream inputStream = new ByteArrayInputStream(bs.toByteArray());
-        OutputStream outputStream = new FileOutputStream("C:\\Users\\taozheng4\\Desktop\\new\\1.png");
+        OutputStream outputStream = new FileOutputStream("C:\\Users\\taozheng4\\Desktop\\new\\1.jpg");
         IOUtils.copy(inputStream, outputStream);
         inputStream.close();
         outputStream.close();
@@ -312,11 +336,12 @@ public class ImageUtils {
     
     /**
      * 创建图片
-     * @param bytes 图片bytes数据
+     *
+     * @param bytes        图片bytes数据
      * @param tempFilePath 图片临时保存路径
-     * @param formatName 图片保存格式
+     * @param formatName   图片保存格式
      */
-    public static void createImage(@NonNull byte[] bytes,String tempFilePath,String formatName){
+    public static void createImage(@NonNull byte[] bytes, String tempFilePath, String formatName) {
         InputStream inputStream = null;
         OutputStream outputStream = null;
         try {
@@ -333,10 +358,10 @@ public class ImageUtils {
             e.printStackTrace();
         } finally {
             try {
-                if (inputStream != null){
+                if (inputStream != null) {
                     inputStream.close();
                 }
-                if (outputStream != null){
+                if (outputStream != null) {
                     outputStream.close();
                 }
             } catch (IOException e) {
@@ -346,20 +371,20 @@ public class ImageUtils {
     }
     
     
-    
     public static String png2jpeg(String pngPath) {
         //读取图片
-        FileOutputStream fos =null;
-        String jpgPath = pngPath.replace("png","jpg");
+        FileOutputStream fos = null;
+        String jpgPath = pngPath.replace("png", "jpg");
         try {
             BufferedImage bufferedImage = ImageIO.read(new File(pngPath));
             //转成jpeg、
             BufferedImage bufferedImage1 = new BufferedImage(bufferedImage.getWidth(),
                     bufferedImage.getHeight(),
                     BufferedImage.TYPE_INT_RGB);
-            bufferedImage1.createGraphics().drawImage(bufferedImage,bufferedImage.getWidth(),bufferedImage.getHeight(), Color.white,null);
+            bufferedImage1.createGraphics()
+                    .drawImage(bufferedImage, bufferedImage.getWidth(), bufferedImage.getHeight(), Color.white, null);
             fos = new FileOutputStream(jpgPath);
-            ImageIO.write(bufferedImage,"jpg",fos);
+            ImageIO.write(bufferedImage, "jpg", fos);
             fos.flush();
         } catch (IOException e) {
             e.printStackTrace();
@@ -374,16 +399,16 @@ public class ImageUtils {
     
     public static void jpeg2png(String jpgPath) {
         //读取图片
-        String pngPath = jpgPath.replace("jpg","png");
+        String pngPath = jpgPath.replace("jpg", "png");
         try {
             BufferedImage bufferedImage = ImageIO.read(new File(jpgPath));
             //转成png、
             BufferedImage bufferedImage1 = new BufferedImage(bufferedImage.getWidth(),
                     bufferedImage.getHeight(),
                     BufferedImage.TYPE_INT_ARGB);
-            bufferedImage1.createGraphics().drawImage(bufferedImage,0,0, Color.white,null);
+            bufferedImage1.createGraphics().drawImage(bufferedImage, 0, 0, Color.white, null);
             FileOutputStream fos = new FileOutputStream(pngPath);
-            ImageIO.write(bufferedImage1,"png",fos);
+            ImageIO.write(bufferedImage1, "png", fos);
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -391,12 +416,11 @@ public class ImageUtils {
     
     /**
      * 压缩图片（通过降低图片质量）
-     * @explain 压缩图片,通过压缩图片质量，保持原图大小
-     * @param quality
-     *       图片质量（0-1）
-     * @return byte[]
-     *      压缩后的图片（jpg）
+     *
+     * @param quality 图片质量（0-1）
+     * @return byte[] 压缩后的图片（jpg）
      * @throws
+     * @explain 压缩图片, 通过压缩图片质量，保持原图大小
      */
     public static byte[] compressPicByQuality(byte[] imgByte, float quality) {
         byte[] imgBytes = null;
@@ -441,5 +465,37 @@ public class ImageUtils {
             e.printStackTrace();
         }
         return imgBytes;
+    }
+    
+    public static byte[] compressPic(byte[] imageByte, float quality) {
+        byte[] inByte = null;
+        try {
+            ByteArrayInputStream byteInput = new ByteArrayInputStream(imageByte);
+            Image img = ImageIO.read(byteInput);
+            float newWidth = img.getWidth(null);
+            float newHeight = img.getHeight(null);
+            
+            Image image = img.getScaledInstance((int) newWidth, (int) newHeight, Image.SCALE_SMOOTH);
+            
+            // 缩放图像
+            BufferedImage tag = new BufferedImage((int) newWidth,
+                    (int) newHeight, BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = tag.createGraphics();
+            g.drawImage(image, 0, 0, null);
+            // 绘制缩小后的图
+            g.dispose();
+            ByteArrayOutputStream out = new ByteArrayOutputStream(imageByte.length);
+            JPEGImageEncoder encoder = JPEGCodec.createJPEGEncoder(out);
+            JPEGEncodeParam jep = JPEGCodec.getDefaultJPEGEncodeParam(tag);
+            // 压缩质量
+            jep.setQuality(quality, true);
+            encoder.encode(tag, jep);
+            inByte = out.toByteArray();
+            out.close();
+            
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        }
+        return inByte;
     }
 }
